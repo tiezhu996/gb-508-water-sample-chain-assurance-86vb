@@ -154,23 +154,34 @@ func seedLabSample(ctx context.Context, db *gorm.DB) error {
 	if err := db.WithContext(ctx).Model(&model.LabSample{}).Count(&count).Error; err != nil || count > 0 {
 		return err
 	}
+	batches := make([]model.SamplingBatch, 0)
+	if err := db.WithContext(ctx).Find(&batches).Error; err != nil {
+		return err
+	}
+	batchIDByCode := make(map[string]uint, len(batches))
+	for _, batch := range batches {
+		batchIDByCode[batch.Code] = batch.ID
+	}
 	now := time.Now().UTC()
 	items := []model.LabSample{
 
 		{BaseModel: model.BaseModel{Code: "LS-001", Name: "实验室样本示例一", Status: "received", Version: 1,
 			Description: "用于启动验证和主要流程演示的实验室样本记录"}, Facility: "水质检测样本链路审核区域1", Owner: "运行一组",
 			Category: "常规", RiskLevel: "low", MetricValue: 12.5, MetricUnit: "unit",
-			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-508-01"},
+			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-508-01",
+			BatchID: batchIDByCode["SB-003"], HandoverBy: "张三"},
 
 		{BaseModel: model.BaseModel{Code: "LS-002", Name: "实验室样本示例二", Status: "accepted", Version: 1,
 			Description: "用于启动验证和主要流程演示的实验室样本记录"}, Facility: "水质检测样本链路审核区域2", Owner: "质量复核组",
 			Category: "重点", RiskLevel: "medium", MetricValue: 25.0, MetricUnit: "%",
-			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-508-02"},
+			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-508-02",
+			BatchID: batchIDByCode["SB-002"], HandoverBy: "李四"},
 
 		{BaseModel: model.BaseModel{Code: "LS-003", Name: "实验室样本示例三", Status: "testing", Version: 1,
 			Description: "用于启动验证和主要流程演示的实验室样本记录"}, Facility: "水质检测样本链路审核区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
-			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-508-03"},
+			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-508-03",
+			BatchID: batchIDByCode["SB-003"], HandoverBy: "王五"},
 	}
 	return db.WithContext(ctx).Create(&items).Error
 }

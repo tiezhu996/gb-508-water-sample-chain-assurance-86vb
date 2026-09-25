@@ -12,6 +12,13 @@ import (
 	"github.com/blueship581/water-sample-chain-assurance/backend/internal/repository"
 )
 
+// SampleInspector exposes the sample-side reads the batch workflow needs
+// without coupling the batch service to the full sample repository.
+type SampleInspector interface {
+	CountByBatchAndStatus(context.Context) (map[uint]map[string]int64, error)
+	OpenSamplesByBatch(context.Context, uint, int) ([]model.LabSample, error)
+}
+
 type SamplingBatchService interface {
 	List(context.Context, dto.PageQuery) (repository.Page[model.SamplingBatch], error)
 	Get(context.Context, uint) (model.SamplingBatch, error)
@@ -24,19 +31,40 @@ type SamplingBatchService interface {
 
 type samplingBatchService struct {
 	repository repository.SamplingBatchRepository
+	samples    SampleInspector
 	security   SecurityService
 }
 
-func NewSamplingBatchService(repo repository.SamplingBatchRepository, security SecurityService) SamplingBatchService {
-	return &samplingBatchService{repository: repo, security: security}
+func NewSamplingBatchService(repo repository.SamplingBatchRepository, samples SampleInspector, security SecurityService) SamplingBatchService {
+	return &samplingBatchService{repository: repo, samples: samples, security: security}
 }
 
 func (s *samplingBatchService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.SamplingBatch], error) {
-	return s.repository.List(ctx, query)
+	page, err := s.repository.List(ctx, query)
+	if err != nil {
+		return page, err
+	}
+	counts, err := s.samples.CountByBatchAndStatus(ctx)
+	if err != nil {
+		return page, fmt.Errorf("count samples per batch: %w", err)
+	}
+	for i := range page.Items {
+		page.Items[i].SampleStatusCounts = counts[page.Items[i].ID]
+	}
+	return page, nil
 }
 
 func (s *samplingBatchService) Get(ctx context.Context, id uint) (model.SamplingBatch, error) {
-	return s.repository.Get(ctx, id)
+	item, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return item, err
+	}
+	counts, err := s.samples.CountByBatchAndStatus(ctx)
+	if err != nil {
+		return item, fmt.Errorf("count samples per batch: %w", err)
+	}
+	item.SampleStatusCounts = counts[item.ID]
+	return item, nil
 }
 
 func (s *samplingBatchService) Create(ctx context.Context, input dto.CreateSamplingBatch, actor, requestID string) (model.SamplingBatch, error) {
@@ -98,6 +126,11 @@ func (s *samplingBatchService) Transition(ctx context.Context, id uint, input dt
 	if !constants.CanTransition(constants.SamplingBatchTransitions, current.Status, target) {
 		return model.SamplingBatch{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
 	}
+	if target == model.SamplingBatchStatusClosed {
+		if err := s.ensureNoOpenSamples(ctx, current); err != nil {
+			return model.SamplingBatch{}, err
+		}
+	}
 	before := current.Status
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
@@ -109,6 +142,24 @@ func (s *samplingBatchService) Transition(ctx context.Context, id uint, input dt
 		return model.SamplingBatch{}, fmt.Errorf("persist transition audit: %w", err)
 	}
 	return s.repository.Get(ctx, id)
+}
+
+// ensureNoOpenSamples blocks closing a batch while any of its samples is not
+// disposed yet, naming the blocking samples so the operator can act on them.
+func (s *samplingBatchService) ensureNoOpenSamples(ctx context.Context, batch model.SamplingBatch) error {
+	open, err := s.samples.OpenSamplesByBatch(ctx, batch.ID, 20)
+	if err != nil {
+		return fmt.Errorf("list open samples for 采样批次: %w", err)
+	}
+	if len(open) == 0 {
+		return nil
+	}
+	refs := make([]string, 0, len(open))
+	for _, sample := range open {
+		refs = append(refs, fmt.Sprintf("%s(%s)", sample.Code, sample.Status))
+	}
+	return fmt.Errorf("%w: 采样批次 %s 还有 %d 个样本未处置完成，不能关闭：%s",
+		ErrBatchHasOpenSamples, batch.Code, len(open), strings.Join(refs, "、"))
 }
 
 func (s *samplingBatchService) Delete(ctx context.Context, id uint, actor, requestID string) error {

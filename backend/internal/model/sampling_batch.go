@@ -16,6 +16,9 @@ type SamplingBatch struct {
 	EffectiveAt time.Time `json:"effectiveAt"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+	// SampleStatusCounts is populated by the service layer (not persisted) and
+	// reports how many samples under the batch sit in each sample status.
+	SampleStatusCounts map[string]int64 `json:"sampleStatusCounts,omitempty" gorm:"-"`
 }
 
 func (item *SamplingBatch) GetBase() *BaseModel { return &item.BaseModel }
@@ -23,3 +26,13 @@ func (item *SamplingBatch) GetBase() *BaseModel { return &item.BaseModel }
 func (item SamplingBatch) TableName() string { return "sampling_batchs" }
 
 var SamplingBatchInitialStatus = "planned"
+
+// Sampling batch lifecycle states. Samples may only start testing once their
+// batch has reached the received state, and a batch can only close after all
+// of its samples are disposed.
+const (
+	SamplingBatchStatusPlanned    = "planned"
+	SamplingBatchStatusCollecting = "collecting"
+	SamplingBatchStatusReceived   = "received"
+	SamplingBatchStatusClosed     = "closed"
+)

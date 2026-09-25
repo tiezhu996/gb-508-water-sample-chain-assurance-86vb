@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/blueship581/water-sample-chain-assurance/backend/internal/dto"
 	"github.com/blueship581/water-sample-chain-assurance/backend/internal/model"
 	"github.com/blueship581/water-sample-chain-assurance/backend/internal/repository"
+	"gorm.io/gorm"
 )
 
 type LabSampleService interface {
@@ -24,11 +26,12 @@ type LabSampleService interface {
 
 type labSampleService struct {
 	repository repository.LabSampleRepository
+	batches    repository.SamplingBatchRepository
 	security   SecurityService
 }
 
-func NewLabSampleService(repo repository.LabSampleRepository, security SecurityService) LabSampleService {
-	return &labSampleService{repository: repo, security: security}
+func NewLabSampleService(repo repository.LabSampleRepository, batches repository.SamplingBatchRepository, security SecurityService) LabSampleService {
+	return &labSampleService{repository: repo, batches: batches, security: security}
 }
 
 func (s *labSampleService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.LabSample], error) {
@@ -43,6 +46,13 @@ func (s *labSampleService) Create(ctx context.Context, input dto.CreateLabSample
 	if err := validateLabSampleBusinessFields(input.Code, input.Name, input.Facility, input.Owner); err != nil {
 		return model.LabSample{}, err
 	}
+	batch, err := s.batches.Get(ctx, input.BatchID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.LabSample{}, fmt.Errorf("%w: 采样批次 #%d 不存在，无法接收样本", ErrInvalidInput, input.BatchID)
+		}
+		return model.LabSample{}, fmt.Errorf("load 采样批次: %w", err)
+	}
 	item := model.LabSample{
 		BaseModel: model.BaseModel{
 			Code: strings.ToUpper(strings.TrimSpace(input.Code)), Name: strings.TrimSpace(input.Name),
@@ -53,11 +63,13 @@ func (s *labSampleService) Create(ctx context.Context, input dto.CreateLabSample
 		MetricValue: input.MetricValue, MetricUnit: strings.TrimSpace(input.MetricUnit),
 		EffectiveAt: input.EffectiveAt.UTC(), Evidence: strings.TrimSpace(input.Evidence),
 		RelatedCode: strings.ToUpper(strings.TrimSpace(input.RelatedCode)),
+		BatchID:     batch.ID, HandoverBy: strings.TrimSpace(input.HandoverBy),
 	}
 	if err := s.repository.Create(ctx, &item); err != nil {
 		return model.LabSample{}, fmt.Errorf("create 实验室样本: %w", err)
 	}
-	_ = s.security.Audit(ctx, actor, requestID, "create", "LabSample", item.ID, "", item.Status, "created 实验室样本")
+	_ = s.security.Audit(ctx, actor, requestID, "create", "LabSample", item.ID, "", item.Status,
+		fmt.Sprintf("created 实验室样本, received into batch %s by %s", batch.Code, item.HandoverBy))
 	return item, nil
 }
 
@@ -98,6 +110,11 @@ func (s *labSampleService) Transition(ctx context.Context, id uint, input dto.Tr
 	if !constants.CanTransition(constants.LabSampleTransitions, current.Status, target) {
 		return model.LabSample{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
 	}
+	if target == string(constants.SampleStateTesting) {
+		if err := s.ensureBatchReceived(ctx, current.BatchID); err != nil {
+			return model.LabSample{}, err
+		}
+	}
 	before := current.Status
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
@@ -109,6 +126,25 @@ func (s *labSampleService) Transition(ctx context.Context, id uint, input dto.Tr
 		return model.LabSample{}, fmt.Errorf("persist transition audit: %w", err)
 	}
 	return s.repository.Get(ctx, id)
+}
+
+// ensureBatchReceived blocks starting tests while the sample's batch is still
+// planned or collecting (or the batch link is broken).
+func (s *labSampleService) ensureBatchReceived(ctx context.Context, batchID uint) error {
+	if batchID == 0 {
+		return fmt.Errorf("%w: 样本未关联采样批次，不能开工检测", ErrBatchNotReceived)
+	}
+	batch, err := s.batches.Get(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("%w: 样本关联的采样批次 #%d 不存在，不能开工检测", ErrBatchNotReceived, batchID)
+		}
+		return fmt.Errorf("load 采样批次: %w", err)
+	}
+	if batch.Status != model.SamplingBatchStatusReceived && batch.Status != model.SamplingBatchStatusClosed {
+		return fmt.Errorf("%w: 采样批次 %s 当前状态为 %s，须先推进到 received 后才能开工检测", ErrBatchNotReceived, batch.Code, batch.Status)
+	}
+	return nil
 }
 
 func (s *labSampleService) Delete(ctx context.Context, id uint, actor, requestID string) error {

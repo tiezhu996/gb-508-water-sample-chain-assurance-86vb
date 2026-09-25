@@ -33,6 +33,7 @@ docker compose down -v --remove-orphans
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC；路由守卫和操作按钮与后端角色中间件保持一致。
 - 所有状态变化使用乐观锁并写入不可覆盖的审计日志。
+- 样本链路：收样必须选择采样批次并登记交接人（`batchId` + `handoverBy`，随审计落库）；批次处于 `planned`/`collecting` 时其样本不能进入 `testing`；批次下还有未 `disposed` 的样本时不能 `closed`，报错会列出卡住的样本编码与状态；批次列表/详情返回 `sampleStatusCounts` 展示各状态样本条数。
 - 结果签发强制经过 `draft -> peer_review -> signed`，提交复核者不能签发自己的结果，签发仅允许 reviewer/admin 角色。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
 - 提供脱敏运行配置、当前会话、审计汇总和单实体审计历史接口。
@@ -111,6 +112,7 @@ cd .. && docker compose config --quiet
 
 | 枚举 | 值 | 前后端出现位置 |
 |---|---|---|
+| `BatchState` | `planned, collecting, received, closed` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 | `SampleState` | `received, accepted, testing, hold, disposed` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 | `ReviewState` | `draft, peer_review, signed, rejected` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 

@@ -15,6 +15,17 @@ const (
 
 var AllSampleState = []string{"received", "accepted", "testing", "hold", "disposed"}
 
+type BatchState string
+
+const (
+	BatchStatePlanned    BatchState = "planned"
+	BatchStateCollecting BatchState = "collecting"
+	BatchStateReceived   BatchState = "received"
+	BatchStateClosed     BatchState = "closed"
+)
+
+var AllBatchState = []string{"planned", "collecting", "received", "closed"}
+
 type ReviewState string
 
 const (

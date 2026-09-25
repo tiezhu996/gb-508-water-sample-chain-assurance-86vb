@@ -3,7 +3,8 @@ package dto
 import "time"
 
 // CreateLabSample is the public write contract for 实验室样本. Status is deliberately
-// omitted so callers cannot bypass the service state machine.
+// omitted so callers cannot bypass the service state machine. BatchID and
+// HandoverBy anchor the sample to its 采样批次 and record the handover at reception.
 type CreateLabSample struct {
 	Code        string    `json:"code" binding:"required,min=2,max=64"`
 	Name        string    `json:"name" binding:"required,min=2,max=160"`
@@ -17,6 +18,8 @@ type CreateLabSample struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	BatchID     uint      `json:"batchId" binding:"required"`
+	HandoverBy  string    `json:"handoverBy" binding:"required,min=2,max=120"`
 }
 
 type UpdateLabSample struct {
