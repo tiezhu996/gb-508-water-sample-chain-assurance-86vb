@@ -18,6 +18,11 @@ export interface DomainRecord {
   reviewRequestedBy?: string;
   peerReviewedBy?: string;
   signedBy?: string;
+  batchId?: number;
+  batchCode?: string;
+  handoverBy?: string;
+  handoverAt?: string;
+  sampleCounts?: Record<string, number>;
   createdAt: string;
   updatedAt: string;
 }

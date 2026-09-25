@@ -16,6 +16,13 @@ type LabSample struct {
 	EffectiveAt time.Time `json:"effectiveAt"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+	// BatchID links the sample to the 采样批次 it was received under; HandoverBy
+	// records who handed the sample over at reception. BatchCode is a read-only
+	// denormalized view filled by the service layer for list/detail responses.
+	BatchID    uint      `json:"batchId" gorm:"index"`
+	BatchCode  string    `json:"batchCode,omitempty" gorm:"-"`
+	HandoverBy string    `json:"handoverBy" gorm:"size:120"`
+	HandoverAt time.Time `json:"handoverAt"`
 }
 
 func (item *LabSample) GetBase() *BaseModel { return &item.BaseModel }

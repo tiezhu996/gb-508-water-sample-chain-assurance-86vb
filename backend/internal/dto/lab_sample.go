@@ -17,6 +17,8 @@ type CreateLabSample struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	BatchID     uint      `json:"batchId" binding:"required"`
+	HandoverBy  string    `json:"handoverBy" binding:"required,max=120"`
 }
 
 type UpdateLabSample struct {
@@ -32,4 +34,6 @@ type UpdateLabSample struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	BatchID         uint      `json:"batchId" binding:"required"`
+	HandoverBy      string    `json:"handoverBy" binding:"required,max=120"`
 }

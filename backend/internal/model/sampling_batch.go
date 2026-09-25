@@ -16,6 +16,9 @@ type SamplingBatch struct {
 	EffectiveAt time.Time `json:"effectiveAt"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+	// SampleCounts is a read-only aggregation (status -> total) of the samples
+	// attached to this batch, filled by the service layer for list/detail views.
+	SampleCounts map[string]int64 `json:"sampleCounts,omitempty" gorm:"-"`
 }
 
 func (item *SamplingBatch) GetBase() *BaseModel { return &item.BaseModel }

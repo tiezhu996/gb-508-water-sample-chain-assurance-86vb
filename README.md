@@ -32,6 +32,7 @@ docker compose down -v --remove-orphans
 | 结果复核 | `ResultReview` | `/api/reviews` | draft, peer_review, signed, rejected |
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC；路由守卫和操作按钮与后端角色中间件保持一致。
+- 样本接收时必须挂接采样批次并登记交接人；批次仍在 `planned`/`collecting` 时样本不能进入 `testing`，批次下存在未 `disposed` 样本时批次不能关闭（错误信息列出卡住的样本），批次列表展示各状态样本条数。
 - 所有状态变化使用乐观锁并写入不可覆盖的审计日志。
 - 结果签发强制经过 `draft -> peer_review -> signed`，提交复核者不能签发自己的结果，签发仅允许 reviewer/admin 角色。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。

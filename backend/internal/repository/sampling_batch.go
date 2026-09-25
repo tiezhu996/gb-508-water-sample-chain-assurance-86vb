@@ -12,6 +12,7 @@ import (
 type SamplingBatchRepository interface {
 	List(context.Context, dto.PageQuery) (Page[model.SamplingBatch], error)
 	Get(context.Context, uint) (model.SamplingBatch, error)
+	ListByIDs(context.Context, []uint) ([]model.SamplingBatch, error)
 	Create(context.Context, *model.SamplingBatch) error
 	Update(context.Context, uint, uint, *model.SamplingBatch) error
 	Delete(context.Context, uint) error
@@ -20,10 +21,11 @@ type SamplingBatchRepository interface {
 
 type samplingBatchRepository struct {
 	store *Store[model.SamplingBatch]
+	db    *gorm.DB
 }
 
 func NewSamplingBatchRepository(db *gorm.DB) SamplingBatchRepository {
-	return &samplingBatchRepository{store: NewStore[model.SamplingBatch](db)}
+	return &samplingBatchRepository{store: NewStore[model.SamplingBatch](db), db: db}
 }
 
 func (r *samplingBatchRepository) List(ctx context.Context, q dto.PageQuery) (Page[model.SamplingBatch], error) {
@@ -31,6 +33,17 @@ func (r *samplingBatchRepository) List(ctx context.Context, q dto.PageQuery) (Pa
 }
 func (r *samplingBatchRepository) Get(ctx context.Context, id uint) (model.SamplingBatch, error) {
 	return r.store.Get(ctx, id)
+}
+
+// ListByIDs loads batches in one query so sample views can resolve batch codes
+// without per-row lookups.
+func (r *samplingBatchRepository) ListByIDs(ctx context.Context, ids []uint) ([]model.SamplingBatch, error) {
+	items := make([]model.SamplingBatch, 0)
+	if len(ids) == 0 {
+		return items, nil
+	}
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&items).Error
+	return items, err
 }
 func (r *samplingBatchRepository) Create(ctx context.Context, item *model.SamplingBatch) error {
 	return r.store.Create(ctx, item)

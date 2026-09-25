@@ -24,19 +24,51 @@ type SamplingBatchService interface {
 
 type samplingBatchService struct {
 	repository repository.SamplingBatchRepository
+	samples    repository.LabSampleRepository
 	security   SecurityService
 }
 
-func NewSamplingBatchService(repo repository.SamplingBatchRepository, security SecurityService) SamplingBatchService {
-	return &samplingBatchService{repository: repo, security: security}
+func NewSamplingBatchService(repo repository.SamplingBatchRepository, samples repository.LabSampleRepository, security SecurityService) SamplingBatchService {
+	return &samplingBatchService{repository: repo, samples: samples, security: security}
 }
 
 func (s *samplingBatchService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.SamplingBatch], error) {
-	return s.repository.List(ctx, query)
+	page, err := s.repository.List(ctx, query)
+	if err != nil {
+		return page, err
+	}
+	return page, s.fillSampleCounts(ctx, page.Items)
 }
 
 func (s *samplingBatchService) Get(ctx context.Context, id uint) (model.SamplingBatch, error) {
-	return s.repository.Get(ctx, id)
+	item, err := s.repository.Get(ctx, id)
+	if err != nil {
+		return item, err
+	}
+	items := []model.SamplingBatch{item}
+	if err := s.fillSampleCounts(ctx, items); err != nil {
+		return model.SamplingBatch{}, err
+	}
+	return items[0], nil
+}
+
+// fillSampleCounts attaches per-status sample totals to each batch so the batch
+// page can show how many attached samples sit in every state.
+func (s *samplingBatchService) fillSampleCounts(ctx context.Context, items []model.SamplingBatch) error {
+	ids := make([]uint, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	counts, err := s.samples.CountByBatchAndStatus(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if batchCounts, ok := counts[items[i].ID]; ok {
+			items[i].SampleCounts = batchCounts
+		}
+	}
+	return nil
 }
 
 func (s *samplingBatchService) Create(ctx context.Context, input dto.CreateSamplingBatch, actor, requestID string) (model.SamplingBatch, error) {
@@ -86,7 +118,7 @@ func (s *samplingBatchService) Update(ctx context.Context, id uint, input dto.Up
 		return model.SamplingBatch{}, fmt.Errorf("update 采样批次: %w", err)
 	}
 	_ = s.security.Audit(ctx, actor, requestID, "update", "SamplingBatch", id, current.Status, current.Status, "updated business fields")
-	return s.repository.Get(ctx, id)
+	return s.Get(ctx, id)
 }
 
 func (s *samplingBatchService) Transition(ctx context.Context, id uint, input dto.TransitionRequest, actor, requestID string) (model.SamplingBatch, error) {
@@ -98,6 +130,11 @@ func (s *samplingBatchService) Transition(ctx context.Context, id uint, input dt
 	if !constants.CanTransition(constants.SamplingBatchTransitions, current.Status, target) {
 		return model.SamplingBatch{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
 	}
+	if target == "closed" {
+		if err := s.ensureNoUndisposedSamples(ctx, id); err != nil {
+			return model.SamplingBatch{}, err
+		}
+	}
 	before := current.Status
 	current.Status = target
 	current.Version = input.ExpectedVersion + 1
@@ -108,7 +145,25 @@ func (s *samplingBatchService) Transition(ctx context.Context, id uint, input dt
 	if err := s.security.Audit(ctx, actor, requestID, "transition", "SamplingBatch", id, before, target, input.Reason); err != nil {
 		return model.SamplingBatch{}, fmt.Errorf("persist transition audit: %w", err)
 	}
-	return s.repository.Get(ctx, id)
+	return s.Get(ctx, id)
+}
+
+// ensureNoUndisposedSamples blocks closing a batch while attached samples are
+// still pending disposal, naming every blocking sample so the operator knows
+// exactly what to finish first.
+func (s *samplingBatchService) ensureNoUndisposedSamples(ctx context.Context, batchID uint) error {
+	blockers, err := s.samples.ListUndisposedByBatch(ctx, batchID)
+	if err != nil {
+		return fmt.Errorf("check undisposed samples: %w", err)
+	}
+	if len(blockers) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(blockers))
+	for _, sample := range blockers {
+		names = append(names, fmt.Sprintf("%s(%s)", sample.Code, sample.Status))
+	}
+	return fmt.Errorf("%w: 批次下还有 %d 个样本未处置完成，无法关闭：%s", ErrInvalidTransition, len(blockers), strings.Join(names, "、"))
 }
 
 func (s *samplingBatchService) Delete(ctx context.Context, id uint, actor, requestID string) error {
